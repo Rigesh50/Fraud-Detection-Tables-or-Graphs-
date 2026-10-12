@@ -105,7 +105,31 @@ transactions(id PK, type ENUM, amount, fraud, step, global_step, ts,
   `FOREIGN_KEY_CHECKS=0` and the `first_tx`/`last_tx` constraints are added
   after both tables exist. Verify with the orphan queries below.
 
-### Memgraph — 13-18 seconds, 1.58 GiB resident
+### Memgraph, the easy way — one file, no mounts, 24 seconds
+
+`fraud_1_1m.cypherl.gz` (29 MB) carries the data inside the statements, so
+Memgraph never has to read a file. Nothing to mount, nothing to `docker cp`, no
+`/csv` path to get wrong — it streams in over stdin, still compressed:
+
+```bash
+cd fraud_1_1m
+gunzip -c fraud_1_1m.cypherl.gz | docker exec -i mg-fraud mgconsole
+```
+
+```bash
+gunzip -c fraud_1_1m.cypherl.gz | mgconsole          # native install
+```
+
+Substitute your own container name. The database must be **empty** — this
+creates, it does not merge. 24 seconds, against 13-18 for the CSV routes below,
+which is a fair trade for having no filesystem to argue with.
+
+The file is 4,386 statements, batching rows with `UNWIND` rather than one
+`CREATE` per row — one statement per row would be 4.3 million of them, a far
+bigger file, and slow, since each would commit separately. Regenerate it with
+`python3 scripts/fraud_csv_to_cypherl.py --csv fraud_1_1m/csv --out fraud_1_1m.cypherl`.
+
+### Memgraph from the CSVs — 13-18 seconds, 1.58 GiB resident
 
 Measured on Colima (4 CPU / 8 GiB, virtiofs); Docker Desktop behaves the same.
 **Give the VM at least 4 GB** — the graph does not fit in either runtime's 2 GB
