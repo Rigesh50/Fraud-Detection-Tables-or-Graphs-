@@ -134,12 +134,52 @@ exists.
 Memgraph Community has a single graph, so loading this replaces whatever was
 there.
 
-### Neo4j
+### Neo4j 5.x+ / Neo4j Desktop — 40 seconds
 
-Not loaded here — Neo4j holds the real 332,973-node `frauddetection` database
-instead, so you can compare the real graph and the scaled one. The same CSVs
-work via `LOAD CSV WITH HEADERS` inside `CALL { ... } IN TRANSACTIONS OF 10000
-ROWS`, or `neo4j-admin database import full` with its own header format.
+Use `load_neo4j.cypher`. Neo4j resolves `file:///` against one specific folder,
+so the CSVs have to be put there first.
+
+**Neo4j Desktop**
+
+1. Create a DBMS (or use an existing one) and note its password. Use an **empty**
+   database — the script creates, it does not merge.
+2. In Desktop, click the `...` button on the DBMS → **Open folder** → **Import**.
+3. Copy the *contents* of `csv/` into that folder — the eleven `.csv` files
+   themselves, not the `csv/` directory.
+4. Start the DBMS, then either paste `load_neo4j.cypher` into Neo4j Browser (it
+   runs one statement at a time) or, from the DBMS's `...` → **Terminal**:
+
+```bash
+bin/cypher-shell -u neo4j -p <password> -f /path/to/load_neo4j.cypher
+```
+
+**Server install**
+
+```bash
+cp csv/*.csv "$NEO4J_HOME/import/"
+cypher-shell -u neo4j -p <password> -f load_neo4j.cypher
+```
+
+Unlike the Memgraph script this one creates the constraints *first* — Neo4j
+keeps them during a load and the relationship passes need the indexes they
+bring — and wraps every write in `CALL { ... } IN TRANSACTIONS OF 10000 ROWS`
+so no pass runs as a single huge transaction. It also tests
+`row.next_transaction_id IS NOT NULL` where the Memgraph script compares
+against `""`, because Neo4j's `LOAD CSV` turns empty fields into nulls while
+Memgraph's hands back empty strings.
+
+Measured at 40 seconds for the full 1.1M nodes on a laptop — slower than
+Memgraph's 18 because this builds the graph transactionally, row by row, where
+Memgraph bulk loads in analytical mode.
+
+**Why there is no `.dump` here.** Desktop can create a DBMS straight from a
+dump, which is less work than the above, but a Neo4j dump only restores into a
+server of the **same or newer** version than the one that wrote it. A dump of
+this dataset is 297 MB and carries the kernel version of whatever Neo4j made
+it, so it would fail on any older Desktop — while these CSVs are 88 MB and work
+on every Neo4j from 5.0 onwards. If you want a dump for a specific Neo4j
+version, load the CSVs on that version once and run
+`neo4j-admin database dump <db> --to-path=<dir>`.
 
 ## Verifying a load
 
@@ -149,8 +189,15 @@ Both engines return the same answers.
 
 ```cypher
 MATCH (t:Transaction)-[:TO]->(x) WHERE t.fraud
-RETURN labels(t)[1] AS tx_type, labels(x) AS target, count(*) AS c ORDER BY c DESC;
+RETURN [l IN labels(t) WHERE l <> 'Transaction'][0] AS tx_type,
+       CASE WHEN x:Mule THEN 'Client+Mule' WHEN x:Client THEN 'Client'
+            WHEN x:Merchant THEN 'Merchant' ELSE 'Bank' END AS target,
+       count(*) AS c
+ORDER BY c DESC;
 ```
+
+(Don't reach for `labels(t)[1]` — Neo4j and Memgraph return a node's labels in
+different orders, so the same query would report a different column on each.)
 
 ```sql
 SELECT t.type AS tx_type,

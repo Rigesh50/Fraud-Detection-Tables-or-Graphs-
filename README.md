@@ -1,32 +1,141 @@
 # Fraud Detection — Tables or Graphs?
 
 A 1.1 million node fraud-detection dataset published in one format that loads
-into **both** a graph database and a relational one, so the same questions can
-be asked of each and the answers compared.
+into **Neo4j, Memgraph and MySQL**, so the same questions can be asked of each
+and the answers compared.
 
 Built for a DBMS group project comparing graph and relational engines on
 identical data.
 
-## What's here
+| | Count | | Load time |
+| --- | --- | --- | --- |
+| nodes | 1,100,000 | Memgraph | 18 s |
+| relationships | 3,238,159 | Neo4j | 40 s |
+| transactions | 1,068,669 | MySQL | 27 s |
+| clients (of which mules) | 8,038 (1,431) | | |
+| merchants / banks | 1,146 / 10 | CSV on disk | 89 MB |
+| SSN / Email / Phone | 7,393 / 7,364 / 7,380 | repo clone | 110 MB |
+
+All three engines return identical answers; the verification queries and their
+expected results are in [`fraud_1_1m/README.md`](fraud_1_1m/README.md).
+
+## Get the files
+
+```bash
+git clone https://github.com/Rigesh50/Fraud-Detection-Tables-or-Graphs-.git
+cd Fraud-Detection-Tables-or-Graphs-/fraud_1_1m
+```
+
+Or **Code → Download ZIP** on GitHub, if you'd rather not use git.
 
 ```
 fraud_1_1m/
-  csv/                       11 CSV files, 89 MB
-  load_memgraph.cypher       indexes, LOAD CSV, constraints
+  csv/                       11 CSV files, 89 MB — the data itself
+  load_neo4j.cypher          LOAD CSV for Neo4j 5.x+ (incl. Neo4j Desktop)
+  load_memgraph.cypher       LOAD CSV for Memgraph 2.x / 3.x
   load_mysql.sql             schema, 7 tables, 10 foreign keys, LOAD DATA
-  README.md                  full schema, mapping and verification queries
+  README.md                  schema, graph↔relational mapping, verification
 scripts/
   generate_fraud_data.py     regenerates the dataset at any scale
 ```
 
-| | Count |
-| --- | --- |
-| nodes | 1,100,000 |
-| relationships | 3,238,159 |
-| transactions | 1,068,669 |
-| clients (of which mules) | 8,038 (1,431) |
-| merchants / banks | 1,146 / 10 |
-| SSN / Email / Phone | 7,393 / 7,364 / 7,380 |
+You only need the loader for the engine you're using. Nothing has to be
+installed to *read* the CSVs — they're plain text.
+
+## Neo4j Desktop
+
+1. Create a DBMS in Desktop (or use an existing one) and note its password.
+   Use an **empty** database — the script creates, it does not merge.
+2. Click the `...` button on the DBMS → **Open folder** → **Import**.
+3. Copy the *contents* of `csv/` into that folder — the eleven `.csv` files
+   themselves, **not** the `csv/` folder. Neo4j resolves `file:///` against
+   that one folder and nowhere else.
+4. Start the DBMS, then run the loader. Either paste `load_neo4j.cypher` into
+   Neo4j Browser (it runs statement by statement), or from the DBMS's `...` →
+   **Terminal**:
+
+```bash
+bin/cypher-shell -u neo4j -p <password> -f /path/to/load_neo4j.cypher
+```
+
+Takes about 40 seconds. On a plain server install, `cp csv/*.csv
+"$NEO4J_HOME/import/"` and run the same `cypher-shell -f` command.
+
+There is deliberately no `.dump` in this repo: a Neo4j dump only restores into
+a server of the same or newer version than the one that wrote it, so it would
+fail on older Desktop versions, and it is 297 MB against 88 MB of CSV. See
+[`fraud_1_1m/README.md`](fraud_1_1m/README.md) if you want to make one.
+
+## Memgraph
+
+Memgraph's server process reads the files, so they have to be where it can see
+them — inside the container, if you're using Docker.
+
+```bash
+# start Memgraph if you don't have it (give Docker at least 4 GB: the loaded
+# graph sits at 1.58 GiB, and Docker Desktop's 2 GB default is too tight)
+docker run -d --name memgraph-mage -p 7687:7687 -p 7444:7444 \
+  memgraph/memgraph-mage:latest
+
+cd fraud_1_1m
+docker exec -u root memgraph-mage rm -rf /csv   # docker cp nests otherwise
+docker cp csv memgraph-mage:/csv
+docker exec -i memgraph-mage mgconsole < load_memgraph.cypher
+```
+
+Takes about 18 seconds. Substitute your own container name if it isn't
+`memgraph-mage`.
+
+**Without Docker**, the script's `/csv/` paths need to point at the real
+location:
+
+```bash
+sed -i '' "s|/csv/|$(pwd)/csv/|g" load_memgraph.cypher   # macOS; drop the '' on Linux
+mgconsole < load_memgraph.cypher
+```
+
+**Memgraph Lab** (the GUI, `http://localhost:3000`) is the easiest way to then
+query the graph, but run the load through `mgconsole` as above — the file has 20+
+statements and expects to be streamed in.
+
+Memgraph Community holds a single graph, so this replaces whatever is already
+loaded. To start clean, drop the constraints first — analytical mode refuses to
+engage while they exist:
+
+```cypher
+DROP CONSTRAINT ON (n:Transaction) ASSERT n.id IS UNIQUE;  -- and Client, Bank,
+DROP CONSTRAINT ON (n:SSN) ASSERT n.ssn IS UNIQUE;         -- Merchant, Email, Phone
+STORAGE MODE IN_MEMORY_ANALYTICAL;
+DROP GRAPH;
+STORAGE MODE IN_MEMORY_TRANSACTIONAL;
+```
+
+## MySQL 8.x
+
+The loader creates the schema, seven tables, ten foreign keys and the indexes.
+Its CSV paths are relative, so run it **from inside `fraud_1_1m/`** —
+`LOAD DATA LOCAL INFILE` resolves them against the client's working directory.
+
+```bash
+cd fraud_1_1m
+mysql -u root -p -e "SET GLOBAL local_infile=1;"
+mysql --local-infile=1 -u root -p < load_mysql.sql
+mysql -u root -p -e "SET GLOBAL local_infile=0;"
+```
+
+Takes about 27 seconds. `LOAD DATA LOCAL INFILE` has to be enabled on **both**
+sides — the `--local-infile=1` flag covers the client, and the `SET GLOBAL`
+covers the server (it needs a privileged account, and reverting it afterwards is
+good hygiene). Without it you get:
+
+```
+ERROR 3948 (42000): Loading local data is disabled;
+this must be enabled on both the client and server sides
+```
+
+If you can't enable it at all, move `csv/` into the directory named by
+`SELECT @@secure_file_priv;` and change `LOAD DATA LOCAL INFILE` to
+`LOAD DATA INFILE` in the script.
 
 ## Provenance
 
@@ -75,48 +184,38 @@ models genuinely differ:
 | `NEXT` chain | `transactions.next_transaction_id`, self-referencing |
 | shared `:SSN`/`:Email`/`:Phone` nodes | `clients.ssn` / `.email` / `.phone_number` FKs |
 
-## Loading
-
-**MySQL 8.x** — ~27 seconds. Paths in the loader are relative, so run it from
-inside the dataset directory:
-
-```bash
-cd fraud_1_1m
-mysql -u root -p -e "SET GLOBAL local_infile=1;"
-mysql --local-infile=1 -u root -p < load_mysql.sql
-mysql -u root -p -e "SET GLOBAL local_infile=0;"
-```
-
-**Memgraph 2.x / 3.x** — ~18 seconds, 1.58 GiB resident. The server process
-reads the files, so copy them in first:
-
-```bash
-cd fraud_1_1m
-docker exec -u root memgraph-mage rm -rf /csv   # docker cp nests otherwise
-docker cp csv memgraph-mage:/csv
-docker exec -i memgraph-mage mgconsole < load_memgraph.cypher
-```
-
-**Neo4j** — the same CSVs work via `LOAD CSV WITH HEADERS` inside
-`CALL { ... } IN TRANSACTIONS OF 10000 ROWS`, or `neo4j-admin database import
-full` with its own header format (`:ID`, `:LABEL`, `:START_ID`, `:END_ID`).
-
-Transactions are split into one CSV per type because neither engine can take a
-label from a CSV column; MySQL reads the `type` column from those same files.
+Transactions are split into one CSV per type because **no engine here can take
+a label from a CSV column** — that's why `csv/` has five transaction files
+rather than one, and MySQL reads the `type` column from those same files.
 
 ## Regenerating, at any size
 
 ```bash
-python3 scripts/generate_fraud_data.py --nodes 1100000 --out fraud_1_1m --schema fraud_1_1m
-python3 scripts/generate_fraud_data.py --nodes 10000000 --out fraud_10m --schema fraud_10m
+python3 scripts/generate_fraud_data.py --nodes 1100000  --out fraud_1_1m --schema fraud_1_1m
+python3 scripts/generate_fraud_data.py --nodes 10000000 --out fraud_10m  --schema fraud_10m
 ```
 
-Only the standard library is needed. The proportions, skew and fraud patterns
-hold at any `--nodes`; 1.1M takes about 3 seconds to generate.
+Standard library only — no pip install. The proportions, skew and fraud
+patterns hold at any `--nodes`; 1.1M takes about 3 seconds to generate and
+writes all three loaders alongside the CSVs.
 
 ## Checking a load
 
-`fraud_1_1m/README.md` has the queries, each written for both engines and with
-its expected answer — fraud by type and target, identity-sharing ring sizes, a
-mule-to-client traversal, and a referential-integrity sweep (MySQL loads with
-foreign key checks off for speed, so that last one matters).
+[`fraud_1_1m/README.md`](fraud_1_1m/README.md) has the queries, each written
+for both the graph and the relational model, with expected answers — fraud by
+type and target, identity-sharing ring sizes, a mule-to-client traversal, and a
+referential-integrity sweep (MySQL loads with foreign key checks off for speed,
+so that last one matters).
+
+Quick sanity check, which should give 1,100,000 everywhere:
+
+```cypher
+MATCH (n) RETURN count(n);
+```
+
+```sql
+SELECT (SELECT COUNT(*) FROM transactions) + (SELECT COUNT(*) FROM clients)
+     + (SELECT COUNT(*) FROM merchants)    + (SELECT COUNT(*) FROM banks)
+     + (SELECT COUNT(*) FROM ssns)         + (SELECT COUNT(*) FROM emails)
+     + (SELECT COUNT(*) FROM phones) AS total;
+```
