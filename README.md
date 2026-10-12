@@ -94,6 +94,24 @@ Substitute your own container name. The database must be **empty** — this
 creates, it does not merge. 24 seconds, against 13-18 for the CSV routes below,
 which is a fair trade for having no filesystem to argue with.
 
+**Importing through Memgraph Lab's GUI instead?** Unzip it first — Lab reads a
+plain file:
+
+```bash
+gunzip -k fraud_1_1m.cypherl.gz        # leaves a 184 MB fraud_1_1m.cypherl
+```
+
+Then **Import** → **CYPHERL** and pick that file. Two things to know: Lab runs
+the file **one line per query**, which is why this file contains no comment
+lines at all — a `//` line would be sent as a query of its own and fail with
+`mismatched input '<EOF>' expecting {ANALYZE, CALL, ...}`. And at 184 MB the
+browser does the work, so the `mgconsole` pipe above is the more reliable route
+for a file this size.
+
+If the very first statement fails with `Constraints are not supported in
+analytical storage mode`, the database is not empty — clear it with the block
+at the end of this section and start again.
+
 The file is 4,386 statements, batching rows with `UNWIND` rather than one
 `CREATE` per row — one statement per row would be 4.3 million of them, a far
 bigger file, and slow, since each would commit separately. Regenerate it with
