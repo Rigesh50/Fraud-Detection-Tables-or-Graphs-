@@ -121,10 +121,17 @@ takes 13 seconds:
 
 ```bash
 cd fraud_1_1m
-docker run -d --name memgraph-mage -p 7687:7687 -p 7444:7444 \
+docker run -d --name mg-fraud -p 7687:7687 \
   -v "$(pwd)/csv:/csv:ro" memgraph/memgraph-mage:latest
-docker exec -i memgraph-mage mgconsole < load_memgraph.cypher
+docker exec -i mg-fraud mgconsole < load_memgraph.cypher
 ```
+
+**`Bind for 0.0.0.0:7687 failed: port is already allocated`** means another
+Memgraph is already running. Either load into that one with the `docker cp`
+route below, or give the new container a different host port, `-p 7688:7687`,
+and point clients at 7688. Publishing `7444` is not needed at all — it only
+streams logs to Memgraph Lab — so it is left out above to avoid one more port
+that can clash.
 
 On Colima the clone must sit **under your home directory**: only `/Users/<you>`
 is passed into the VM, and mounting anything else gives an empty directory with
