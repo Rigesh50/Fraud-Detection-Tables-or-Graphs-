@@ -105,47 +105,69 @@ transactions(id PK, type ENUM, amount, fraud, step, global_step, ts,
   `FOREIGN_KEY_CHECKS=0` and the `first_tx`/`last_tx` constraints are added
   after both tables exist. Verify with the orphan queries below.
 
-### Memgraph, the easy way — one file, no mounts, 24 seconds
+### Memgraph, the easy way — one file, no mounts
 
 `fraud_1_1m.cypherl.gz` (29 MB) carries the data inside the statements, so
 Memgraph never has to read a file. Nothing to mount, nothing to `docker cp`, no
-`/csv` path to get wrong — it streams in over stdin, still compressed:
+`/csv` path to get wrong. It comes with two small companion files, because
+index, constraint and storage-mode statements cannot travel inside the import
+itself (see below).
+
+**Command line** — ~25 seconds, streams in still compressed:
 
 ```bash
 cd fraud_1_1m
+docker exec -i mg-fraud mgconsole < fraud_1_1m_1_indexes.cypher
 gunzip -c fraud_1_1m.cypherl.gz | docker exec -i mg-fraud mgconsole
+docker exec -i mg-fraud mgconsole < fraud_1_1m_2_constraints.cypher
 ```
+
+Drop `docker exec -i mg-fraud` and pipe straight into `mgconsole` on a native
+install. Substitute your own container name.
+
+**Memgraph Lab (GUI)** — same three steps, since Lab cannot run the first and
+third from inside an import:
 
 ```bash
-gunzip -c fraud_1_1m.cypherl.gz | mgconsole          # native install
+gunzip -k fraud_1_1m.cypherl.gz      # Lab needs a plain file; leaves 184 MB
 ```
 
-Substitute your own container name. The database must be **empty** — this
-creates, it does not merge. 24 seconds, against 13-18 for the CSV routes below,
-which is a fair trade for having no filesystem to argue with.
+1. Paste the contents of `fraud_1_1m_1_indexes.cypher` into the query editor
+   and run it. **Do this first** — without the indexes, every relationship
+   statement scans the whole graph.
+2. **Import** → **CYPHERL** → `fraud_1_1m.cypherl`.
+3. Paste the contents of `fraud_1_1m_2_constraints.cypher` into the editor and
+   run it.
 
-**Importing through Memgraph Lab's GUI instead?** Unzip it first — Lab reads a
-plain file:
+If the editor objects to several statements at once, run them one line at a
+time; there are only eight and seven of them.
 
-```bash
-gunzip -k fraud_1_1m.cypherl.gz        # leaves a 184 MB fraud_1_1m.cypherl
+**Why three files.** Lab wraps a CYPHERL import in a single explicit
+(multicommand) transaction, and Memgraph rejects three kinds of statement
+inside one:
+
+```
+Modifying storage modes is not allowed in multicommand transactions.
+Index manipulation is not allowed in multicommand transactions.
+Constraint manipulation is not allowed in multicommand transactions.
 ```
 
-Then **Import** → **CYPHERL** and pick that file. Two things to know: Lab runs
-the file **one line per query**, which is why this file contains no comment
-lines at all — a `//` line would be sent as a query of its own and fail with
-`mismatched input '<EOF>' expecting {ANALYZE, CALL, ...}`. And at 184 MB the
-browser does the work, so the `mgconsole` pipe above is the more reliable route
-for a file this size.
+So the import file holds data statements only. It also holds no comments: Lab
+executes the file line by line, so a `//` line is sent as a query of its own
+and fails with `mismatched input '<EOF>' expecting {ANALYZE, CALL, ...}`.
+`mgconsole` runs every statement in its own implicit transaction and skips
+comments, which is why it never hits any of this — but the files are built for
+the stricter case so both routes work.
 
-If the very first statement fails with `Constraints are not supported in
-analytical storage mode`, the database is not empty — clear it with the block
-at the end of this section and start again.
+The database must be **empty**; this creates, it does not merge. Verified both
+ways on an empty Memgraph — including the whole data file inside one explicit
+transaction, exactly as Lab sends it: 1,100,000 nodes and 3,238,159
+relationships, peak memory 1.75 GiB.
 
-The file is 4,386 statements, batching rows with `UNWIND` rather than one
+The data file is 4,386 statements, batching rows with `UNWIND` rather than one
 `CREATE` per row — one statement per row would be 4.3 million of them, a far
-bigger file, and slow, since each would commit separately. Regenerate it with
-`python3 scripts/fraud_csv_to_cypherl.py --csv fraud_1_1m/csv --out fraud_1_1m.cypherl`.
+bigger file, and slow, since each would commit separately. Regenerate all three
+with `python3 scripts/fraud_csv_to_cypherl.py --csv fraud_1_1m/csv --out fraud_1_1m.cypherl`.
 
 ### Memgraph from the CSVs — 13-18 seconds, 1.58 GiB resident
 

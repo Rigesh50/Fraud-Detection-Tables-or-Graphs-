@@ -59,21 +59,15 @@ def main():
     counts = {}
 
     with open(args.out, "w", encoding="utf-8") as out:
-        # No comments, and nothing but executable statements: Memgraph Lab's
-        # CYPHERL import runs the file line by line, so a `//` line is sent as a
-        # query of its own and fails with "mismatched input '<EOF>'". mgconsole
-        # tolerates them; the GUI does not. Usage lives in the README instead.
-        out.write(
-            "STORAGE MODE IN_MEMORY_ANALYTICAL;\n"
-            "CREATE INDEX ON :Bank(id);\n"
-            "CREATE INDEX ON :Merchant(id);\n"
-            "CREATE INDEX ON :SSN(ssn);\n"
-            "CREATE INDEX ON :Email(email);\n"
-            "CREATE INDEX ON :Phone(phoneNumber);\n"
-            "CREATE INDEX ON :Client(id);\n"
-            "CREATE INDEX ON :Transaction(id);\n"
-            "CREATE INDEX ON :Transaction(globalStep);\n"
-        )
+        # The data file holds nothing but data statements. Memgraph Lab wraps a
+        # CYPHERL import in one explicit (multicommand) transaction, and
+        # Memgraph refuses index, constraint and storage-mode statements inside
+        # one -- "Index manipulation is not allowed in multicommand
+        # transactions", and likewise for the other two. They go in separate
+        # files, run on their own. Comments are out too: Lab executes the file
+        # line by line, so a `//` line becomes an empty query and fails with
+        # "mismatched input '<EOF>'". mgconsole tolerates all of this; the GUI
+        # does not.
 
         # --- reference nodes ---
         counts["Bank"] = emit_batches(
@@ -187,16 +181,32 @@ def main():
                 "(b:Transaction {{id:r.b}}) CREATE (a)-[:" + rel + "]->(b);\n",
             )
 
-        out.write(
-            "STORAGE MODE IN_MEMORY_TRANSACTIONAL;\n"
-            "CREATE CONSTRAINT ON (n:Bank) ASSERT n.id IS UNIQUE;\n"
-            "CREATE CONSTRAINT ON (n:Merchant) ASSERT n.id IS UNIQUE;\n"
-            "CREATE CONSTRAINT ON (n:SSN) ASSERT n.ssn IS UNIQUE;\n"
-            "CREATE CONSTRAINT ON (n:Email) ASSERT n.email IS UNIQUE;\n"
-            "CREATE CONSTRAINT ON (n:Phone) ASSERT n.phoneNumber IS UNIQUE;\n"
-            "CREATE CONSTRAINT ON (n:Client) ASSERT n.id IS UNIQUE;\n"
-            "CREATE CONSTRAINT ON (n:Transaction) ASSERT n.id IS UNIQUE;\n"
-        )
+    out_path = Path(args.out)
+    stem = out_path.name[:-len(".cypherl")] if out_path.name.endswith(".cypherl") else out_path.stem
+    before = out_path.with_name(f"{stem}_1_indexes.cypher")
+    after = out_path.with_name(f"{stem}_2_constraints.cypher")
+    before.write_text(
+        "STORAGE MODE IN_MEMORY_ANALYTICAL;\n"
+        "CREATE INDEX ON :Bank(id);\n"
+        "CREATE INDEX ON :Merchant(id);\n"
+        "CREATE INDEX ON :SSN(ssn);\n"
+        "CREATE INDEX ON :Email(email);\n"
+        "CREATE INDEX ON :Phone(phoneNumber);\n"
+        "CREATE INDEX ON :Client(id);\n"
+        "CREATE INDEX ON :Transaction(id);\n"
+        "CREATE INDEX ON :Transaction(globalStep);\n"
+    )
+    after.write_text(
+        "STORAGE MODE IN_MEMORY_TRANSACTIONAL;\n"
+        "CREATE CONSTRAINT ON (n:Bank) ASSERT n.id IS UNIQUE;\n"
+        "CREATE CONSTRAINT ON (n:Merchant) ASSERT n.id IS UNIQUE;\n"
+        "CREATE CONSTRAINT ON (n:SSN) ASSERT n.ssn IS UNIQUE;\n"
+        "CREATE CONSTRAINT ON (n:Email) ASSERT n.email IS UNIQUE;\n"
+        "CREATE CONSTRAINT ON (n:Phone) ASSERT n.phoneNumber IS UNIQUE;\n"
+        "CREATE CONSTRAINT ON (n:Client) ASSERT n.id IS UNIQUE;\n"
+        "CREATE CONSTRAINT ON (n:Transaction) ASSERT n.id IS UNIQUE;\n"
+    )
+    print(f"  {before.name} / {after.name}: run these on their own, not inside the import")
 
     nodes = sum(v for k, v in counts.items() if "/" not in k and not k.startswith("HAS")
                 and k not in ("FIRST_TX", "LAST_TX"))
