@@ -285,6 +285,79 @@ UNION ALL SELECT 'clients.last_tx_id', COUNT(*) FROM clients c LEFT JOIN transac
 UNION ALL SELECT 'exactly-one TO target', COUNT(*) FROM transactions WHERE (to_merchant_id IS NOT NULL)+(to_client_id IS NOT NULL)+(to_bank_id IS NOT NULL) <> 1;
 ```
 
+## Troubleshooting
+
+Every message below is verbatim from actually hitting the problem.
+
+**MySQL — `ERROR 3948 (42000): Loading local data is disabled; this must be
+enabled on both the client and server sides`**
+The `--local-infile=1` flag covers the client only. Run
+`SET GLOBAL local_infile=1;` as a privileged user, load, then set it back to 0.
+If you have no such account, move `csv/` into the folder named by
+`SELECT @@secure_file_priv;` and change `LOAD DATA LOCAL INFILE` to
+`LOAD DATA INFILE`.
+
+**MySQL — `ERROR 2 (HY000) at line 1: File 'csv/banks.csv' not found (OS
+errno 2 - No such file or directory)`**
+The loader's paths are relative. Run it from inside `fraud_1_1m/`, not from the
+repo root.
+
+**Memgraph — `Client received query exception: CSV file not found: /csv/banks.csv`**
+The server cannot see the files. In a container they must be mounted at `/csv`
+or copied there with `docker cp`; a native install needs the paths rewritten
+(see the Memgraph section). Remember it is the *server's* filesystem that
+matters, not yours.
+
+**Memgraph — the load runs with no errors but `MATCH (n) RETURN count(n)`
+returns 0 or a number from an earlier load**
+Two causes, neither of which announces itself:
+- On Colima, a `-v` mount of a path outside your home directory appears as an
+  empty directory. Move the clone under `/Users/<you>`.
+- `docker cp csv container:/csv` nests into `/csv/csv` when `/csv` already
+  exists, leaving the *old* files in place. Run
+  `docker exec -u root <container> rm -rf /csv` first.
+
+**Memgraph — `rm: cannot remove '/csv/banks.csv': Permission denied`**
+`docker cp` writes as root; the container's own user cannot delete those files.
+Add `-u root` to the `docker exec`.
+
+**Memgraph — `Constraints are not supported in analytical storage mode. Please
+drop them before changing storage mode to analytical or use transactional
+mode.`**
+A previous load left its uniqueness constraints behind. Drop the seven listed
+in the Memgraph section, then switch mode and `DROP GRAPH`.
+
+**Memgraph — the container dies or the load aborts partway**
+Out of memory. The graph needs 1.58 GiB and neither Colima nor Docker Desktop
+gives 2 GB-plus by default: `colima start --memory 4 --cpu 4`, or Docker
+Desktop → Settings → Resources.
+
+**Neo4j — `22N43: data exception - unable to load external resource. Could not
+load external resource from file:///banks.csv.`**
+The CSVs are not in the database's import folder, or the `csv/` folder itself
+was copied in rather than its contents. `file:///banks.csv` resolves to
+`<import folder>/banks.csv`, so the eleven files must sit there loose. In
+Desktop: the DBMS's `...` → **Open folder** → **Import**.
+
+**Neo4j — `22N79: property uniqueness constraint violated. ... already exists
+with label 'Bank' and property 'id' = ...`** (Neo4j 5.x words the same thing as
+`Neo.ClientError.Schema.ConstraintValidationFailed`)
+The database wasn't empty. The loader creates rather than merges, so run it
+against a fresh one.
+
+**Neo4j — a `.dump` you made elsewhere won't load: `not on a supported version
+(current format: ...). Use the 'neo4j-admin database migrate' command`**
+Dumps move forward only. Run
+`neo4j-admin database migrate <db> --force-btree-indexes-to-range` after
+loading an older dump; a *newer* dump cannot be restored into an older Neo4j at
+all, which is why this repo ships CSVs instead.
+
+**Any engine — counts don't match 1,100,000**
+Compare against the per-label and per-table numbers in
+[`fraud_1_1m/README.md`](fraud_1_1m/README.md); it also has the
+referential-integrity sweep for MySQL, which loads with foreign key checks off
+and so will happily accept a partial load.
+
 ## Files
 
 ```
