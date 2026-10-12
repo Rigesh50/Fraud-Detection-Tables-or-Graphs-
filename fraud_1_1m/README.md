@@ -211,14 +211,21 @@ Measured at 40 seconds for the full 1.1M nodes on a laptop — slower than
 Memgraph's 18 because this builds the graph transactionally, row by row, where
 Memgraph bulk loads in analytical mode.
 
-**Why there is no `.dump` here.** Desktop can create a DBMS straight from a
-dump, which is less work than the above, but a Neo4j dump only restores into a
-server of the **same or newer** version than the one that wrote it. A dump of
-this dataset is 297 MB and carries the kernel version of whatever Neo4j made
-it, so it would fail on any older Desktop — while these CSVs are 88 MB and work
-on every Neo4j from 5.0 onwards. If you want a dump for a specific Neo4j
-version, load the CSVs on that version once and run
-`neo4j-admin database dump <db> --to-path=<dir>`.
+**Or skip the CSVs.** A ready-made Neo4j dump is attached to
+[release v1.0-neo4j-dump](https://github.com/Rigesh50/Fraud-Detection-Tables-or-Graphs-/releases/tag/v1.0-neo4j-dump): in Desktop, **Add** → **File**, pick it, then
+`...` → **Create new DBMS from dump**. That restores in seconds.
+
+It comes with one hard condition, so check before downloading 297 MB: a dump
+only restores into a server the **same or newer** version than the one that
+wrote it, and this one was written by **Neo4j 2026.09.0** (store
+`record-aligned-1.1`, kernel `V2026_10`). Neo4j 5.x and 2025.x — what most
+Desktop installs run — cannot read it at all;
+`neo4j-admin database migrate` only moves a store forward, never back. The CSVs
+above have none of that problem: 88 MB, and every Neo4j from 5.0 onwards.
+
+To make a dump for your own Neo4j version, load the CSVs on that version once
+and run `neo4j-admin database dump <db> --to-path=<dir>` with the server
+stopped.
 
 ## Verifying a load
 
@@ -349,8 +356,9 @@ against a fresh one.
 (current format: ...). Use the 'neo4j-admin database migrate' command`**
 Dumps move forward only. Run
 `neo4j-admin database migrate <db> --force-btree-indexes-to-range` after
-loading an older dump; a *newer* dump cannot be restored into an older Neo4j at
-all, which is why this repo ships CSVs instead.
+loading an *older* dump. A *newer* dump cannot be restored into an older Neo4j
+at all — including the one attached to this repo's release, which needs Neo4j
+2026.09+. Use the CSVs on anything older.
 
 **Any engine — counts don't match 1,100,000**
 Compare against the per-label and per-table numbers in

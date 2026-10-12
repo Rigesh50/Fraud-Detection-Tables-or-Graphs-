@@ -61,10 +61,17 @@ bin/cypher-shell -u neo4j -p <password> -f /path/to/load_neo4j.cypher
 Takes about 40 seconds. On a plain server install, `cp csv/*.csv
 "$NEO4J_HOME/import/"` and run the same `cypher-shell -f` command.
 
-There is deliberately no `.dump` in this repo: a Neo4j dump only restores into
-a server of the same or newer version than the one that wrote it, so it would
-fail on older Desktop versions, and it is 297 MB against 88 MB of CSV. See
-[`fraud_1_1m/README.md`](fraud_1_1m/README.md) if you want to make one.
+**Or restore a ready-made database.** A Neo4j dump of this dataset is attached
+to [release v1.0-neo4j-dump](https://github.com/Rigesh50/Fraud-Detection-Tables-or-Graphs-/releases/tag/v1.0-neo4j-dump) — in Desktop, **Add** → **File**, pick the
+`.dump`, then its `...` → **Create new DBMS from dump**. Seconds instead of 40,
+and no import folder to fiddle with.
+
+> **Check your Neo4j version first.** A dump only restores into a server the
+> **same or newer** than the one that wrote it, and that file was written by
+> **Neo4j 2026.09.0**. On 5.x or 2025.x — what most Desktop installs run — it
+> will not load, and no flag fixes it (`migrate` only moves a store forward).
+> It is also 297 MB against 88 MB of CSV, and it is Neo4j-only. If in doubt,
+> load the CSVs above.
 
 ## Memgraph
 
@@ -229,8 +236,9 @@ against a fresh one.
 (current format: ...). Use the 'neo4j-admin database migrate' command`**
 Dumps move forward only. Run
 `neo4j-admin database migrate <db> --force-btree-indexes-to-range` after
-loading an older dump; a *newer* dump cannot be restored into an older Neo4j at
-all, which is why this repo ships CSVs instead.
+loading an *older* dump. A *newer* dump cannot be restored into an older Neo4j
+at all — including the one attached to this repo's release, which needs Neo4j
+2026.09+. Use the CSVs on anything older.
 
 **Any engine — counts don't match 1,100,000**
 Compare against the per-label and per-table numbers in
