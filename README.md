@@ -68,35 +68,63 @@ fail on older Desktop versions, and it is 297 MB against 88 MB of CSV. See
 
 ## Memgraph
 
-Memgraph's server process reads the files, so they have to be where it can see
-them — inside the container, if you're using Docker.
+Memgraph's server process reads the CSVs itself, so they have to be somewhere
+it can see them — inside the VM/container, if you're running it in Docker or
+Colima. The `docker` commands below are identical either way; what differs is
+where you set the memory.
+
+**Give the VM at least 4 GB.** The loaded graph sits at 1.58 GiB and will not
+fit in the 2 GB default of either runtime.
 
 ```bash
-# start Memgraph if you don't have it (give Docker at least 4 GB: the loaded
-# graph sits at 1.58 GiB, and Docker Desktop's 2 GB default is too tight)
-docker run -d --name memgraph-mage -p 7687:7687 -p 7444:7444 \
-  memgraph/memgraph-mage:latest
+# Colima — memory is a VM setting, not a Docker preference
+colima start --memory 4 --cpu 4          # or: colima stop && colima start --memory 4
+# Docker Desktop — Settings → Resources → Memory
+```
 
+Then start Memgraph with `csv/` mounted, which avoids copying anything:
+
+```bash
+cd fraud_1_1m
+docker run -d --name memgraph-mage -p 7687:7687 -p 7444:7444 \
+  -v "$(pwd)/csv:/csv:ro" memgraph/memgraph-mage:latest
+
+docker exec -i memgraph-mage mgconsole < load_memgraph.cypher
+```
+
+13 seconds, measured on Colima (4 CPU / 8 GiB, virtiofs).
+
+> **On Colima the clone must live under your home directory.** Colima only
+> passes `/Users/<you>` into the VM, and a `-v` mount of any other path —
+> `/tmp`, an external volume — silently appears as an *empty* directory, so the
+> load finds no files and creates nothing. There is no error.
+
+**Already have a Memgraph container running?** You can't add a mount to a live
+container, so copy the files in instead:
+
+```bash
 cd fraud_1_1m
 docker exec -u root memgraph-mage rm -rf /csv   # docker cp nests otherwise
 docker cp csv memgraph-mage:/csv
 docker exec -i memgraph-mage mgconsole < load_memgraph.cypher
 ```
 
-Takes about 18 seconds. Substitute your own container name if it isn't
-`memgraph-mage`.
+18 seconds. Note both quirks: `docker cp csv container:/csv` creates
+`/csv/csv` when `/csv` already exists, and the container's own user cannot
+delete root-owned files there — hence `-u root rm -rf` first. A stale `/csv`
+from an earlier load is the one failure here that produces plausible-looking
+wrong data rather than an error.
 
-**Without Docker**, the script's `/csv/` paths need to point at the real
-location:
+**No container at all** (native install)? Point the script at the real path:
 
 ```bash
 sed -i '' "s|/csv/|$(pwd)/csv/|g" load_memgraph.cypher   # macOS; drop the '' on Linux
 mgconsole < load_memgraph.cypher
 ```
 
-**Memgraph Lab** (the GUI, `http://localhost:3000`) is the easiest way to then
-query the graph, but run the load through `mgconsole` as above — the file has 20+
-statements and expects to be streamed in.
+**Memgraph Lab** (the GUI, `http://localhost:3000`) is the pleasant way to
+query the graph afterwards, but run the load through `mgconsole` as above — the
+file is 20+ statements meant to be streamed in.
 
 Memgraph Community holds a single graph, so this replaces whatever is already
 loaded. To start clean, drop the constraints first — analytical mode refuses to

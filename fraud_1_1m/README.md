@@ -105,12 +105,51 @@ transactions(id PK, type ENUM, amount, fraud, step, global_step, ts,
   `FOREIGN_KEY_CHECKS=0` and the `first_tx`/`last_tx` constraints are added
   after both tables exist. Verify with the orphan queries below.
 
-### Memgraph — 18 seconds, 1.58 GiB resident
+### Memgraph — 13-18 seconds, 1.58 GiB resident
+
+Measured on Colima (4 CPU / 8 GiB, virtiofs); Docker Desktop behaves the same.
+**Give the VM at least 4 GB** — the graph does not fit in either runtime's 2 GB
+default:
 
 ```bash
-docker exec -u root memgraph-mage rm -rf /csv    # docker cp nests otherwise
+colima start --memory 4 --cpu 4     # Colima: a VM setting
+                                    # Docker Desktop: Settings -> Resources
+```
+
+Mounting `csv/` when you start the container is the least fiddly route, and
+takes 13 seconds:
+
+```bash
+cd fraud_1_1m
+docker run -d --name memgraph-mage -p 7687:7687 -p 7444:7444 \
+  -v "$(pwd)/csv:/csv:ro" memgraph/memgraph-mage:latest
+docker exec -i memgraph-mage mgconsole < load_memgraph.cypher
+```
+
+On Colima the clone must sit **under your home directory**: only `/Users/<you>`
+is passed into the VM, and mounting anything else gives an empty directory with
+no error, so the load silently creates nothing.
+
+For a container that is already running, copy the files in instead (18
+seconds) — a mount cannot be added to a live container:
+
+```bash
+cd fraud_1_1m
+docker exec -u root memgraph-mage rm -rf /csv   # docker cp nests otherwise
 docker cp csv memgraph-mage:/csv
 docker exec -i memgraph-mage mgconsole < load_memgraph.cypher
+```
+
+Both quirks are worth knowing: `docker cp csv container:/csv` creates
+`/csv/csv` if `/csv` exists, and the container user cannot delete root-owned
+files there. A stale `/csv` is the one mistake here that yields wrong data
+instead of an error.
+
+**Not in a container?** The script reads from `/csv/`, so repoint it:
+
+```bash
+sed -i '' "s|/csv/|$(pwd)/csv/|g" load_memgraph.cypher   # macOS; drop the '' on Linux
+mgconsole < load_memgraph.cypher
 ```
 
 `load_memgraph.cypher` creates the indexes, bulk loads in
